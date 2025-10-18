@@ -3,6 +3,8 @@ import cors from "cors";
 import morgan from "morgan";
 import swaggerUi from "swagger-ui-express";
 import swaggerJsdoc from "swagger-jsdoc";
+import { errorHandler } from "./middlewares/errorHandler";
+import router from "./routes/index";
 
 const app = express();
 
@@ -26,7 +28,7 @@ const options = {
 const swaggerSpec = swaggerJsdoc(options);
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-app.use(routes);
+app.use("/api",router);
 
 app.use(errorHandler);
 
