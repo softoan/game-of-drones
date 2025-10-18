@@ -5,9 +5,10 @@ import mongoose from "mongoose";
 import { getIo } from "../socket/index";
 import { CreateMatchDto, MoveDto } from "../dtos/match.dto";
 import { decideWinner } from "../utils/gameLogic";
-import { IRound } from "../models/IMatch";
+import { IMatch, IRound } from "../models/IMatch";
+import { IMatchService } from "../models/IMatchService";
 
-export class MatchService {
+export class MatchService implements IMatchService {
     private matchRepo = new MatchRepository();
     private playerRepo = new PlayerRepository();
     private roundsToWin = 3; // Rondas necesarias para ganar la partida
@@ -72,7 +73,7 @@ export class MatchService {
      * Valida que sea su turno, registra el movimiento y actualiza el estado.
      * También emite eventos en tiempo real a través de Socket.IO.
      */
-    async makeMove(matchId: string, playerId: string, dto: MoveDto) {
+    async makeMove(matchId: string, playerId: string, dto: MoveDto): Promise<IMatch | null> {
         const match = await this.matchRepo.findById(matchId);
         if (!match) {
             const e: any = new Error("Partida no encontrada");
@@ -143,12 +144,17 @@ export class MatchService {
         // Si ambos jugadores ya hicieron su movimiento, decidir el ganador de la ronda
         if (currentRound.moves.length === 2) {
             const [m1, m2] = currentRound.moves;
-            if (!m1 || !m2) return;
+            // Cambié el return por throw para evitar que la función pueda devolver undefined
+            if (!m1 || !m2) {
+                const e: any = new Error("Datos de movimientos incompletos en la ronda");
+                e.status = 500;
+                throw e;
+            }
+
             const playerAMove = match.playerA.equals(m1.playerId) ? m1.move : m2.move;
             const playerBMove = match.playerB.equals(m1.playerId) ? m1.move : m2.move;
 
             const result = decideWinner(playerAMove, playerBMove);
-
 
             if (result === 0) {
                 currentRound.winner = null; // Empate
@@ -202,11 +208,17 @@ export class MatchService {
         // Guardar cambios en la base de datos
         const updated = await this.matchRepo.update(match.id, match as any);
 
-        // Emitir estado actualizado de la partida a los clientes
-        if (io) io.to(matchId).emit("matchUpdate", { match: updated });
+        // Normalizar el resultado para que sea exactamente IMatch | null (sin undefined ni Document)
+        const result: IMatch | null = updated
+            ? ((typeof (updated as any).toObject === "function") ? (updated as any).toObject() as IMatch : updated as IMatch)
+            : null;
 
-        return updated;
+        // Emitir estado actualizado de la partida a los clientes (solo si tenemos result)
+        if (io && result) io.to(matchId).emit("matchUpdate", { match: result });
+
+        return result;
     }
+
 
     // Obtener historial de partidas de un jugador
     async listMatchesByPlayer(playerId: string) {

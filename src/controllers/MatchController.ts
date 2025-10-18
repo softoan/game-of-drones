@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { MatchService } from "../services/MatchService";
 import { plainToInstance } from "class-transformer";
 import { CreateMatchDto, MoveDto } from "../dtos/match.dto";
+import { validateOrReject } from "class-validator";
 
 const service = new MatchService();
 
@@ -37,6 +38,8 @@ export class MatchController {
             if (!playerId) {
                 return res.status(400).json({ error: true, message: "playerId requerido" });
             }
+            // Validar el movimiento (ROCK, PAPER o SCISSORS)
+            await validateOrReject(dto);
             const updated = await service.makeMove((req.params.id ?? ''), String(playerId), dto);
             return res.json({ error: false, data: updated });
         } catch (err: any) {
