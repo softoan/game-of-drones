@@ -3,9 +3,9 @@ import { Move } from "../models/IMatch";
 
 /**
  * Returns:
- *  - 0 for draw
- *  - 1 if a wins
- *  - 2 if b wins
+* - 0 por empate
+* - 1 si gana A
+* - 2 si gana B
  */
 export function decideWinner(a: Move, b: Move): 0 | 1 | 2 {
   if (a === b) return 0;
