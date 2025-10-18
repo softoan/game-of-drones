@@ -1,7 +1,8 @@
 import { CreatePlayerDto } from "../dtos/player.dto";
+import { IPlayerService } from "../models/IPlayerService";
 import { PlayerRepository } from "../repositories/PlayerRepository";
 
-export class PlayerService {
+export class PlayerService implements IPlayerService {
   private repo = new PlayerRepository();
 
   async createPlayer(dto: CreatePlayerDto) {
