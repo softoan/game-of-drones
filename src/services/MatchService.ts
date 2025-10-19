@@ -11,7 +11,6 @@ import { IMatchService } from "../models/IMatchService";
 export class MatchService implements IMatchService {
     private matchRepo = new MatchRepository();
     private playerRepo = new PlayerRepository();
-    private roundsToWin = 3; // Rondas necesarias para ganar la partida
 
     // Crear una nueva partida entre dos jugadores
     async createMatch(dto: CreateMatchDto) {
@@ -74,7 +73,7 @@ export class MatchService implements IMatchService {
      * También emite eventos en tiempo real a través de Socket.IO.
      */
     async makeMove(matchId: string, playerId: string, dto: MoveDto): Promise<IMatch | null> {
-        const ROUNDS_TO_WIN = 3; // 🏁 Primer jugador en ganar 3 rondas gana la partida
+        const ROUNDS_TO_WIN = 3; // Primer jugador en ganar 3 rondas gana la partida
 
         const match = await this.matchRepo.findById(matchId);
         if (!match) {
@@ -157,7 +156,7 @@ export class MatchService implements IMatchService {
 
             // Determinar resultado de la ronda
             if (result === 0) {
-                activeRound.winner = null; // Empate
+                activeRound.winner = null;
             } else if (result === 1) {
                 activeRound.winner = match.playerA;
                 match.score.playerA += 1;
@@ -225,7 +224,6 @@ export class MatchService implements IMatchService {
 
         return result;
     }
-
 
     // Obtener historial de partidas de un jugador
     async listMatchesByPlayer(playerId: string) {
