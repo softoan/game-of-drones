@@ -9,7 +9,7 @@ services:
     depends_on:
       - mongodbgame
     environment:
-      - MONGO_URI=mongodb://mongodbgame:27017/MongoDbGame
+      - MONGO_URI=mongodb://mongodbgame:27023/MongoDbGame
     command: npm run start
 
   mongodbgame:

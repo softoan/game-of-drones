@@ -74,19 +74,22 @@ export class MatchService implements IMatchService {
      * También emite eventos en tiempo real a través de Socket.IO.
      */
     async makeMove(matchId: string, playerId: string, dto: MoveDto): Promise<IMatch | null> {
+        const ROUNDS_TO_WIN = 3; // 🏁 Primer jugador en ganar 3 rondas gana la partida
+
         const match = await this.matchRepo.findById(matchId);
         if (!match) {
             const e: any = new Error("Partida no encontrada");
             e.status = 404;
             throw e;
         }
+
         if (match.status === "FINISHED") {
             const e: any = new Error("La partida ya ha finalizado");
             e.status = 400;
             throw e;
         }
 
-        // Validar que el jugador pertenezca a esta partida
+        // Validar que el jugador pertenezca a la partida
         const playerIsA = match.playerA.toString() === playerId;
         const playerIsB = match.playerB.toString() === playerId;
         if (!playerIsA && !playerIsB) {
@@ -97,7 +100,7 @@ export class MatchService implements IMatchService {
 
         // Validar turno actual
         if (!match.currentTurn) {
-            match.currentTurn = match.playerA; // retroceder si no está definido
+            match.currentTurn = match.playerA; // Si no hay turno definido, comienza jugador A
         }
         if (match.currentTurn.toString() !== playerId) {
             const e: any = new Error("No es tu turno");
@@ -108,33 +111,30 @@ export class MatchService implements IMatchService {
         // Obtener la ronda actual o crear una nueva si no existe o ya está completa
         let currentRound = match.rounds.length > 0 ? match.rounds[match.rounds.length - 1] : null;
         if (!currentRound || currentRound.moves.length === 2) {
-            currentRound = {
+            const newRound = {
                 roundNumber: match.rounds.length + 1,
                 moves: [],
                 winner: null
-            } as any;
-            match.rounds.push(currentRound as IRound);
-        }
+            } as IRound;
 
-        if (!currentRound) {
-            const e: any = new Error("No se pudo determinar la ronda actual");
-            e.status = 500;
-            throw e;
+            match.rounds.push(newRound);
+            currentRound = newRound;
         }
 
         // Evitar movimientos duplicados en la misma ronda
-        if (currentRound.moves.some(m => m.playerId.toString() === playerId)) {
+        if (currentRound.moves.some(m => m.playerId.toString() === playerId.toString())) {
             const e: any = new Error("El jugador ya realizó su movimiento en esta ronda");
             e.status = 400;
             throw e;
         }
 
-        // Registrar el movimiento
-        currentRound.moves.push({
+        // Registrar el movimiento en la ronda actual (usando referencia directa)
+        const lastRound = match.rounds.at(-1)!;
+        lastRound.moves.push({
             playerId: new mongoose.Types.ObjectId(playerId),
             move: dto.move,
             timestamp: new Date()
-        } as any);
+        });
 
         // Intentar obtener instancia de Socket.IO
         const io = (() => {
@@ -142,9 +142,9 @@ export class MatchService implements IMatchService {
         })();
 
         // Si ambos jugadores ya hicieron su movimiento, decidir el ganador de la ronda
-        if (currentRound.moves.length === 2) {
-            const [m1, m2] = currentRound.moves;
-            // Cambié el return por throw para evitar que la función pueda devolver undefined
+        const activeRound = match.rounds[match.rounds.length - 1];
+        if (activeRound?.moves.length === 2) {
+            const [m1, m2] = activeRound.moves;
             if (!m1 || !m2) {
                 const e: any = new Error("Datos de movimientos incompletos en la ronda");
                 e.status = 500;
@@ -153,67 +153,74 @@ export class MatchService implements IMatchService {
 
             const playerAMove = match.playerA.equals(m1.playerId) ? m1.move : m2.move;
             const playerBMove = match.playerB.equals(m1.playerId) ? m1.move : m2.move;
-
             const result = decideWinner(playerAMove, playerBMove);
 
+            // Determinar resultado de la ronda
             if (result === 0) {
-                currentRound.winner = null; // Empate
+                activeRound.winner = null; // Empate
             } else if (result === 1) {
-                currentRound.winner = match.playerA;
+                activeRound.winner = match.playerA;
                 match.score.playerA += 1;
             } else {
-                currentRound.winner = match.playerB;
+                activeRound.winner = match.playerB;
                 match.score.playerB += 1;
             }
 
-            // Emitir el resultado de la ronda a los clientes conectados
+            // Emitir resultado de la ronda
             if (io) io.to(matchId).emit("roundResult", {
-                roundNumber: currentRound.roundNumber,
-                winner: currentRound.winner ? currentRound.winner.toString() : null,
-                moves: currentRound.moves.map(m => ({ playerId: m.playerId.toString(), move: m.move }))
+                roundNumber: activeRound.roundNumber,
+                winner: activeRound.winner ? activeRound.winner.toString() : null,
+                moves: activeRound.moves.map(m => ({ playerId: m.playerId.toString(), move: m.move }))
             });
 
-            // Verificar si alguien ya ganó la partida
-            if (match.score.playerA >= this.roundsToWin || match.score.playerB >= this.roundsToWin) {
+            // Verificar si alguien ganó la partida (3 rondas)
+            if (match.score.playerA >= ROUNDS_TO_WIN || match.score.playerB >= ROUNDS_TO_WIN) {
                 match.status = "FINISHED";
-                match.winner = match.score.playerA >= this.roundsToWin ? match.playerA : match.playerB;
+                match.winner = match.score.playerA >= ROUNDS_TO_WIN ? match.playerA : match.playerB;
 
                 const winnerId = match.winner.toString();
                 const loserId = winnerId === match.playerA.toString() ? match.playerB.toString() : match.playerA.toString();
 
-                // Actualizar estadísticas de los jugadores
+                // Actualizar estadísticas
                 await this.playerRepo.updateStats(winnerId, { $inc: { wins: 1 } } as any);
                 await this.playerRepo.updateStats(loserId, { $inc: { losses: 1 } } as any);
 
-                // Notificar a los clientes que la partida terminó
+                // Notificar fin de partida
                 if (io) io.to(matchId).emit("matchEnd", {
                     winner: match.winner.toString(),
                     score: match.score
                 });
             } else {
-                // Si la partida continúa, decidir quién inicia la siguiente ronda
-                if (currentRound.winner === null) {
-                    // En caso de empate, alternar turno
-                    match.currentTurn = match.currentTurn.toString() === match.playerA.toString() ? match.playerB : match.playerA;
+                // Si la partida continúa
+                if (activeRound?.winner === null) {
+                    // Empate → alternar turno
+                    match.currentTurn = match.currentTurn.toString() === match.playerA.toString()
+                        ? match.playerB
+                        : match.playerA;
                 } else {
-                    // El ganador de la ronda empieza la siguiente
-                    match.currentTurn = currentRound.winner;
+                    // Gana el que empieza siguiente
+                    match.currentTurn = activeRound?.winner ?? null;
                 }
             }
         } else {
-            // Si solo un jugador ha jugado, cambiar el turno al otro
+            // Si solo un jugador ha jugado, cambiar turno
             match.currentTurn = playerIsA ? match.playerB : match.playerA;
         }
 
-        // Guardar cambios en la base de datos
+        // Forzar que Mongoose detecte cambios en las rondas
+        match.markModified("rounds");
+
+        // Guardar cambios
         const updated = await this.matchRepo.update(match.id, match as any);
 
-        // Normalizar el resultado para que sea exactamente IMatch | null (sin undefined ni Document)
+        // Normalizar resultado a IMatch
         const result: IMatch | null = updated
-            ? ((typeof (updated as any).toObject === "function") ? (updated as any).toObject() as IMatch : updated as IMatch)
+            ? ((typeof (updated as any).toObject === "function")
+                ? (updated as any).toObject() as IMatch
+                : updated as IMatch)
             : null;
 
-        // Emitir estado actualizado de la partida a los clientes (solo si tenemos result)
+        // Emitir actualización global del estado de la partida
         if (io && result) io.to(matchId).emit("matchUpdate", { match: result });
 
         return result;
